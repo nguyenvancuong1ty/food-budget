@@ -1,0 +1,71 @@
+{
+  "entities": {
+    "Budget": {
+      "title": "Budget",
+      "description": "Stores the user's current budget and balance information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID of the owner." },
+        "totalBudget": { "type": "number", "description": "The target budget for the month." },
+        "currentBalance": { "type": "number", "description": "The remaining balance." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp." }
+      },
+      "required": ["uid", "totalBudget", "currentBalance", "updatedAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Represents a single spending transaction.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID of the owner." },
+        "amount": { "type": "number", "description": "The amount spent." },
+        "description": { "type": "string", "description": "What the money was spent on." },
+        "date": { "type": "string", "format": "date-time", "description": "When the expense occurred." },
+        "type": { "type": "string", "enum": ["expense", "income"], "description": "Whether it was a deduction or addition." }
+      },
+      "required": ["uid", "amount", "description", "date", "type"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Stores user profile and role information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID." },
+        "email": { "type": "string", "description": "The user email." },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "The user role." }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "User notification and EmailJS settings.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The user ID." },
+        "emails": { "type": "array", "items": { "type": "string" }, "description": "List of emails to notify." },
+        "emailjsServiceId": { "type": "string", "description": "EmailJS Service ID." },
+        "emailjsTemplateId": { "type": "string", "description": "EmailJS Template ID." },
+        "emailjsPublicKey": { "type": "string", "description": "EmailJS Public Key." }
+      },
+      "required": ["uid", "emails"]
+    }
+  },
+  "firestore": {
+    "/budgets/{budgetId}": {
+      "schema": "Budget",
+      "description": "Collection of user budgets."
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Collection of user expenses."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles."
+    },
+    "/settings/{settingsId}": {
+      "schema": "Settings",
+      "description": "Collection of user settings."
+    }
+  }
+}

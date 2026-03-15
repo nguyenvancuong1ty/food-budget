@@ -1,0 +1,108 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: budgets
+    // Fields:
+    //   - uid: string (required) - Owner ID
+    //   - totalBudget: number (required) - Target monthly budget
+    //   - currentBalance: number (required) - Remaining balance
+    //   - updatedAt: string (required) - ISO date string
+    //
+    // Collection: expenses
+    // Fields:
+    //   - uid: string (required) - Owner ID
+    //   - amount: number (required) - Amount spent/added
+    //   - description: string (required) - Description
+    //   - date: string (required) - ISO date string
+    //   - type: string (required) - 'expense' or 'income'
+    //
+    // Collection: settings
+    // Fields:
+    //   - uid: string (required) - Owner ID
+    //   - emails: list (required) - List of notification emails
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "nguyenvancuong13102001t@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidBudget(data) {
+      return data.keys().hasAll(['uid', 'totalBudget', 'currentBalance', 'updatedAt']) &&
+             data.uid is string &&
+             data.totalBudget is number &&
+             data.currentBalance is number &&
+             data.updatedAt is string;
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['uid', 'amount', 'description', 'date', 'type']) &&
+             data.uid is string &&
+             data.amount is number &&
+             data.amount > 0 &&
+             data.description is string &&
+             data.description.size() > 0 &&
+             data.description.size() < 200 &&
+             data.date is string &&
+             data.type in ['expense', 'income'];
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['uid', 'emails']) &&
+             data.uid is string &&
+             data.emails is list &&
+             data.emails.size() <= 10 &&
+             (!('emailjsServiceId' in data) || (data.emailjsServiceId is string && data.emailjsServiceId.size() < 100)) &&
+             (!('emailjsTemplateId' in data) || (data.emailjsTemplateId is string && data.emailjsTemplateId.size() < 100)) &&
+             (!('emailjsPublicKey' in data) || (data.emailjsPublicKey is string && data.emailjsPublicKey.size() < 100));
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && isOwner(userId);
+      allow create: if isAuthenticated() && isOwner(userId) && 
+        (request.resource.data.role == 'user' || 
+         (request.auth.token.email == "nguyenvancuong13102001t@gmail.com" && request.resource.data.role == 'admin'));
+      allow update: if isAuthenticated() && (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin();
+    }
+
+    match /budgets/{budgetId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.uid == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid && isValidBudget(request.resource.data);
+      allow update: if isAuthenticated() && isDocOwner() && isValidBudget(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.uid == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid && isValidExpense(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || isDocOwner();
+    }
+
+    match /settings/{settingId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.uid == request.auth.uid);
+      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.uid == request.auth.uid) && (request.resource == null || isValidSettings(request.resource.data));
+    }
+  }
+}
