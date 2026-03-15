@@ -49,8 +49,7 @@ service cloud.firestore {
     }
 
     function isValidBudget(data) {
-      return data.keys().hasAll(['uid', 'totalBudget', 'currentBalance', 'updatedAt']) &&
-             data.uid is string &&
+      return data.keys().hasAll(['totalBudget', 'currentBalance', 'updatedAt']) &&
              data.totalBudget is number &&
              data.currentBalance is number &&
              data.updatedAt is string;
@@ -69,8 +68,7 @@ service cloud.firestore {
     }
 
     function isValidSettings(data) {
-      return data.keys().hasAll(['uid', 'emails']) &&
-             data.uid is string &&
+      return data.keys().hasAll(['emails']) &&
              data.emails is list &&
              data.emails.size() <= 10 &&
              (!('emailjsServiceId' in data) || (data.emailjsServiceId is string && data.emailjsServiceId.size() < 100)) &&
@@ -87,22 +85,23 @@ service cloud.firestore {
     }
 
     match /budgets/{budgetId} {
-      allow read: if isAuthenticated() && (resource == null || resource.data.uid == request.auth.uid);
-      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid && isValidBudget(request.resource.data);
-      allow update: if isAuthenticated() && isDocOwner() && isValidBudget(request.resource.data);
+      allow read: if isAuthenticated() && (budgetId == 'default' || resource == null || resource.data.uid == request.auth.uid);
+      allow create: if isAuthenticated() && budgetId == 'default' && isValidBudget(request.resource.data);
+      allow update: if isAuthenticated() && (budgetId == 'default' || isDocOwner()) && (request.resource == null || isValidBudget(request.resource.data));
       allow delete: if isAdmin();
     }
 
     match /expenses/{expenseId} {
-      allow read: if isAuthenticated() && (resource == null || resource.data.uid == request.auth.uid);
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid && isValidExpense(request.resource.data);
       allow update: if isAdmin();
       allow delete: if isAdmin() || isDocOwner();
     }
 
     match /settings/{settingId} {
-      allow read: if isAuthenticated() && (resource == null || resource.data.uid == request.auth.uid);
-      allow write: if isAuthenticated() && (request.resource == null || request.resource.data.uid == request.auth.uid) && (request.resource == null || isValidSettings(request.resource.data));
+      allow read: if isAuthenticated() && (settingId == 'default' || resource == null || resource.data.uid == request.auth.uid);
+      allow create, update: if isAuthenticated() && settingId == 'default' && isAdmin() && (request.resource == null || isValidSettings(request.resource.data));
+      allow delete: if isAdmin();
     }
   }
 }

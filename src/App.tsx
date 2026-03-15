@@ -47,10 +47,14 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// Shared: mọi user dùng chung 1 budget và 1 settings (chỉ admin cấu hình)
+const SHARED_BUDGET_ID = 'default';
+const SHARED_SETTINGS_ID = 'default';
+
 // --- Types ---
 interface Budget {
   id?: string;
-  uid: string;
+  uid?: string;
   totalBudget: number;
   currentBalance: number;
   updatedAt: string;
@@ -67,7 +71,7 @@ interface Expense {
 
 interface NotificationSettings {
   id?: string;
-  uid: string;
+  uid?: string;
   emails: string[];
   emailjsServiceId?: string;
   emailjsTemplateId?: string;
@@ -235,29 +239,28 @@ function BudgetTracker() {
     return unsubscribe;
   }, []);
 
-  // Budget, Expenses & Settings Sync
+  // Budget, Expenses & Settings Sync (1 budget chung cho tất cả user)
   useEffect(() => {
     if (!user) return;
 
-    const budgetQuery = query(collection(db, 'budgets'), where('uid', '==', user.uid), limit(1));
-    const unsubBudget = onSnapshot(budgetQuery, (snapshot) => {
-      if (!snapshot.empty) {
-        const docData = snapshot.docs[0];
-        setBudget({ id: docData.id, ...docData.data() } as Budget);
+    const budgetRef = doc(db, 'budgets', SHARED_BUDGET_ID);
+    const unsubBudget = onSnapshot(budgetRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setBudget({ id: snapshot.id, ...snapshot.data() } as Budget);
       } else {
-        const initialBudget: Budget = {
-          uid: user.uid,
+        const initialBudget = {
           totalBudget: 5000000,
           currentBalance: 5000000,
           updatedAt: new Date().toISOString()
         };
-        setDoc(doc(collection(db, 'budgets')), initialBudget).catch(e => handleFirestoreError(e, OperationType.WRITE, 'budgets'));
+        setDoc(budgetRef, initialBudget)
+          .then(() => setBudget({ id: SHARED_BUDGET_ID, ...initialBudget } as Budget))
+          .catch(e => handleFirestoreError(e, OperationType.WRITE, 'budgets'));
       }
     });
 
     const expensesQuery = query(
-      collection(db, 'expenses'), 
-      where('uid', '==', user.uid),
+      collection(db, 'expenses'),
       orderBy('date', 'desc'),
       limit(50)
     );
@@ -265,17 +268,17 @@ function BudgetTracker() {
       setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense)));
     });
 
-    const settingsQuery = query(collection(db, 'settings'), where('uid', '==', user.uid), limit(1));
-    const unsubSettings = onSnapshot(settingsQuery, (snapshot) => {
-      if (!snapshot.empty) {
-        const docData = snapshot.docs[0];
-        setNotifSettings({ id: docData.id, ...docData.data() } as NotificationSettings);
+    const settingsRef = doc(db, 'settings', SHARED_SETTINGS_ID);
+    const unsubSettings = onSnapshot(settingsRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setNotifSettings({ id: snapshot.id, ...snapshot.data() } as NotificationSettings);
+      } else if (user?.email === ADMIN_EMAIL) {
+        const initialSettings = { emails: [user.email || ''] };
+        setDoc(settingsRef, initialSettings)
+          .then(() => setNotifSettings({ id: SHARED_SETTINGS_ID, ...initialSettings } as NotificationSettings))
+          .catch(e => console.error('Init shared settings:', e));
       } else {
-        const initialSettings: NotificationSettings = {
-          uid: user.uid,
-          emails: [user.email || '']
-        };
-        setDoc(doc(collection(db, 'settings')), initialSettings);
+        setNotifSettings(null);
       }
     });
 
@@ -444,13 +447,13 @@ function BudgetTracker() {
   };
 
   const handleAddEmail = async () => {
-    if (!newEmail || !notifSettings || !user) return;
+    if (!isAdmin || !newEmail || !notifSettings) return;
     if (!newEmail.includes('@')) return;
 
     const updatedEmails = [...notifSettings.emails, newEmail];
     try {
       if (notifSettings.id) {
-        await updateDoc(doc(db, 'settings', notifSettings.id), { emails: updatedEmails });
+        await updateDoc(doc(db, 'settings', SHARED_SETTINGS_ID), { emails: updatedEmails });
       }
       setNewEmail('');
     } catch (e) {
@@ -459,11 +462,11 @@ function BudgetTracker() {
   };
 
   const handleRemoveEmail = async (emailToRemove: string) => {
-    if (!notifSettings) return;
+    if (!isAdmin || !notifSettings) return;
     const updatedEmails = notifSettings.emails.filter(e => e !== emailToRemove);
     try {
       if (notifSettings.id) {
-        await updateDoc(doc(db, 'settings', notifSettings.id), { emails: updatedEmails });
+        await updateDoc(doc(db, 'settings', SHARED_SETTINGS_ID), { emails: updatedEmails });
       }
     } catch (e) {
       console.error(e);
@@ -519,9 +522,11 @@ function BudgetTracker() {
           </div>
         </div>
         <div className="flex items-center gap-1 md:gap-2">
-          <button onClick={() => setShowSettings(true)} className="p-2 md:p-3 hover:bg-slate-100 rounded-2xl transition-all">
-            <Settings className="w-5 h-5 md:w-6 md:h-6 text-slate-400" />
-          </button>
+          {isAdmin && (
+            <button onClick={() => setShowSettings(true)} className="p-2 md:p-3 hover:bg-slate-100 rounded-2xl transition-all">
+              <Settings className="w-5 h-5 md:w-6 md:h-6 text-slate-400" />
+            </button>
+          )}
           <button onClick={logout} className="p-2 md:p-3 hover:bg-slate-100 rounded-2xl transition-all">
             <LogOut className="w-5 h-5 md:w-6 md:h-6 text-slate-400" />
           </button>
@@ -708,7 +713,7 @@ function BudgetTracker() {
           </motion.div>
         )}
 
-        {showSettings && (
+        {showSettings && isAdmin && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-slate-900/40 backdrop-blur-md">
             <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="w-full max-w-md">
               <Card className="bg-white border-slate-200 p-8 md:p-10 shadow-2xl">
@@ -762,7 +767,7 @@ function BudgetTracker() {
                               if (!notifSettings) return;
                               const updated = { ...notifSettings, emailjsServiceId: e.target.value };
                               setNotifSettings(updated);
-                              updateDoc(doc(db, 'settings', notifSettings.id!), { emailjsServiceId: e.target.value });
+                              updateDoc(doc(db, 'settings', SHARED_SETTINGS_ID), { emailjsServiceId: e.target.value });
                             }}
                             placeholder="service_xxxxxxx"
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:outline-none focus:border-slate-900"
@@ -777,7 +782,7 @@ function BudgetTracker() {
                               if (!notifSettings) return;
                               const updated = { ...notifSettings, emailjsTemplateId: e.target.value };
                               setNotifSettings(updated);
-                              updateDoc(doc(db, 'settings', notifSettings.id!), { emailjsTemplateId: e.target.value });
+                              updateDoc(doc(db, 'settings', SHARED_SETTINGS_ID), { emailjsTemplateId: e.target.value });
                             }}
                             placeholder="template_xxxxxxx"
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:outline-none focus:border-slate-900"
@@ -792,7 +797,7 @@ function BudgetTracker() {
                               if (!notifSettings) return;
                               const updated = { ...notifSettings, emailjsPublicKey: e.target.value };
                               setNotifSettings(updated);
-                              updateDoc(doc(db, 'settings', notifSettings.id!), { emailjsPublicKey: e.target.value });
+                              updateDoc(doc(db, 'settings', SHARED_SETTINGS_ID), { emailjsPublicKey: e.target.value });
                             }}
                             placeholder="Public Key của bạn"
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold focus:outline-none focus:border-slate-900"
