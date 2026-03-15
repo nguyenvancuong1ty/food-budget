@@ -87,7 +87,10 @@ service cloud.firestore {
     match /budgets/{budgetId} {
       allow read: if isAuthenticated() && (budgetId == 'default' || resource == null || resource.data.uid == request.auth.uid);
       allow create: if isAuthenticated() && budgetId == 'default' && isValidBudget(request.resource.data);
-      allow update: if isAuthenticated() && (budgetId == 'default' || isDocOwner()) && (request.resource == null || isValidBudget(request.resource.data));
+      allow update: if isAuthenticated() && (
+        budgetId == 'default' ||
+        (isDocOwner() && request.resource != null && isValidBudget(request.resource.data))
+      );
       allow delete: if isAdmin();
     }
 
