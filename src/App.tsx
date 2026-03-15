@@ -8,6 +8,7 @@ import {
   query, 
   where, 
   onSnapshot, 
+  getDocs,
   addDoc, 
   updateDoc, 
   doc, 
@@ -238,24 +239,41 @@ function BudgetTracker() {
     return unsubscribe;
   }, []);
 
-  // Budget, Expenses & Settings Sync (1 budget chung cho tất cả user)
+  // Budget: đọc 1 lần (getDocs), tạo 1 doc nếu chưa có, rồi listen 1 document (tránh loop Write - theo Firestore best practice)
   useEffect(() => {
     if (!user) return;
 
-    const budgetQuery = query(collection(db, 'budgets'), limit(1));
-    const unsubBudget = onSnapshot(budgetQuery, (snapshot) => {
-      if (!snapshot.empty) {
-        const first = snapshot.docs[0];
-        setBudget({ id: first.id, ...first.data() } as Budget);
-      } else {
-        const initialBudget = {
-          totalBudget: 5000000,
-          currentBalance: 5000000,
-          updatedAt: new Date().toISOString()
-        };
-        addDoc(collection(db, 'budgets'), initialBudget).catch(e => handleFirestoreError(e, OperationType.WRITE, 'budgets'));
-      }
-    });
+    let cancelled = false;
+    let unsubBudget: (() => void) | null = null;
+    const budgetsRef = collection(db, 'budgets');
+    const budgetQuery = query(budgetsRef, limit(1));
+
+    getDocs(budgetQuery)
+      .then((snapshot) => {
+        if (cancelled) return;
+        if (!snapshot.empty) {
+          const first = snapshot.docs[0];
+          const data = first.data();
+          setBudget({ id: first.id, ...data } as Budget);
+          unsubBudget = onSnapshot(doc(db, 'budgets', first.id), (docSnap) => {
+            if (!cancelled && docSnap.exists()) setBudget({ id: docSnap.id, ...docSnap.data() } as Budget);
+          });
+        } else {
+          const initialBudget = {
+            totalBudget: 5000000,
+            currentBalance: 5000000,
+            updatedAt: new Date().toISOString()
+          };
+          return addDoc(budgetsRef, initialBudget).then((ref) => {
+            if (cancelled) return;
+            setBudget({ id: ref.id, ...initialBudget } as Budget);
+            unsubBudget = onSnapshot(ref, (docSnap) => {
+              if (!cancelled && docSnap.exists()) setBudget({ id: docSnap.id, ...docSnap.data() } as Budget);
+            });
+          });
+        }
+      })
+      .catch((e) => { if (!cancelled) handleFirestoreError(e, OperationType.LIST, 'budgets'); });
 
     const expensesQuery = query(
       collection(db, 'expenses'),
@@ -281,7 +299,8 @@ function BudgetTracker() {
     });
 
     return () => {
-      unsubBudget();
+      cancelled = true;
+      unsubBudget?.();
       unsubExpenses();
       unsubSettings();
     };
