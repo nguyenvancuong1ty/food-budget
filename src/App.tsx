@@ -9,6 +9,7 @@ import {
   where, 
   onSnapshot, 
   getDocs,
+  getDoc,
   addDoc, 
   updateDoc, 
   doc, 
@@ -243,6 +244,7 @@ function BudgetTracker() {
   useEffect(() => {
     if (!user) return;
 
+    console.log('[Budget] effect run, user.uid:', user.uid);
     let cancelled = false;
     let unsubBudget: (() => void) | null = null;
     const budgetsRef = collection(db, 'budgets');
@@ -250,30 +252,42 @@ function BudgetTracker() {
 
     getDocs(budgetQuery)
       .then((snapshot) => {
+        console.log('[Budget] getDocs resolved, empty:', snapshot.empty, 'size:', snapshot.size);
         if (cancelled) return;
         if (!snapshot.empty) {
           const first = snapshot.docs[0];
           const data = first.data();
+          console.log('[Budget] using existing doc id:', first.id, 'data:', data);
           setBudget({ id: first.id, ...data } as Budget);
           unsubBudget = onSnapshot(doc(db, 'budgets', first.id), (docSnap) => {
             if (!cancelled && docSnap.exists()) setBudget({ id: docSnap.id, ...docSnap.data() } as Budget);
           });
         } else {
+          console.log('[Budget] no doc found, creating new budget...');
           const initialBudget = {
             totalBudget: 5000000,
             currentBalance: 5000000,
             updatedAt: new Date().toISOString()
           };
-          return addDoc(budgetsRef, initialBudget).then((ref) => {
-            if (cancelled) return;
-            setBudget({ id: ref.id, ...initialBudget } as Budget);
-            unsubBudget = onSnapshot(ref, (docSnap) => {
-              if (!cancelled && docSnap.exists()) setBudget({ id: docSnap.id, ...docSnap.data() } as Budget);
+          return addDoc(budgetsRef, initialBudget)
+            .then((ref) => {
+              console.log('[Budget] addDoc success, new id:', ref.id);
+              if (cancelled) return;
+              setBudget({ id: ref.id, ...initialBudget } as Budget);
+              unsubBudget = onSnapshot(ref, (docSnap) => {
+                if (!cancelled && docSnap.exists()) setBudget({ id: docSnap.id, ...docSnap.data() } as Budget);
+              });
+            })
+            .catch((e) => {
+              console.error('[Budget] addDoc failed:', e);
+              if (!cancelled) handleFirestoreError(e, OperationType.WRITE, 'budgets');
             });
-          });
         }
       })
-      .catch((e) => { if (!cancelled) handleFirestoreError(e, OperationType.LIST, 'budgets'); });
+      .catch((e) => {
+        console.error('[Budget] getDocs failed:', e);
+        if (!cancelled) handleFirestoreError(e, OperationType.LIST, 'budgets');
+      });
 
     const expensesQuery = query(
       collection(db, 'expenses'),
@@ -284,25 +298,38 @@ function BudgetTracker() {
       setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Expense)));
     });
 
+    // Settings: đọc 1 lần (getDoc), tạo 1 lần nếu admin và chưa có, rồi listen (tránh loop Write)
+    let unsubSettings: (() => void) | null = null;
     const settingsRef = doc(db, 'settings', SHARED_SETTINGS_ID);
-    const unsubSettings = onSnapshot(settingsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setNotifSettings({ id: snapshot.id, ...snapshot.data() } as NotificationSettings);
-      } else if (user?.email === ADMIN_EMAIL) {
-        const initialSettings = { emails: [user.email || ''] };
-        setDoc(settingsRef, initialSettings)
-          .then(() => setNotifSettings({ id: SHARED_SETTINGS_ID, ...initialSettings } as NotificationSettings))
-          .catch(e => console.error('Init shared settings:', e));
-      } else {
-        setNotifSettings(null);
-      }
-    });
+    getDoc(settingsRef)
+      .then((snap) => {
+        if (cancelled) return;
+        if (snap.exists()) {
+          setNotifSettings({ id: snap.id, ...snap.data() } as NotificationSettings);
+          unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+            if (!cancelled && docSnap.exists()) setNotifSettings({ id: docSnap.id, ...docSnap.data() } as NotificationSettings);
+          });
+        } else if (user?.email === ADMIN_EMAIL) {
+          const initialSettings = { emails: [user.email || ''] };
+          return setDoc(settingsRef, initialSettings).then(() => {
+            if (cancelled) return;
+            setNotifSettings({ id: SHARED_SETTINGS_ID, ...initialSettings } as NotificationSettings);
+            unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+              if (!cancelled && docSnap.exists()) setNotifSettings({ id: docSnap.id, ...docSnap.data() } as NotificationSettings);
+            });
+          });
+        } else {
+          setNotifSettings(null);
+        }
+      })
+      .catch((e) => { if (!cancelled) console.error('Settings load:', e); });
 
     return () => {
+      console.log('[Budget] effect cleanup, unsubscribing');
       cancelled = true;
       unsubBudget?.();
       unsubExpenses();
-      unsubSettings();
+      unsubSettings?.();
     };
   }, [user]);
 
