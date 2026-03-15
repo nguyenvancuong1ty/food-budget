@@ -47,8 +47,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// Shared: mọi user dùng chung 1 budget và 1 settings (chỉ admin cấu hình)
-const SHARED_BUDGET_ID = 'default';
+// Shared: 1 budget duy nhất (lấy doc đầu tiên), settings chỉ admin cấu hình
 const SHARED_SETTINGS_ID = 'default';
 
 // --- Types ---
@@ -243,19 +242,18 @@ function BudgetTracker() {
   useEffect(() => {
     if (!user) return;
 
-    const budgetRef = doc(db, 'budgets', SHARED_BUDGET_ID);
-    const unsubBudget = onSnapshot(budgetRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setBudget({ id: snapshot.id, ...snapshot.data() } as Budget);
+    const budgetQuery = query(collection(db, 'budgets'), limit(1));
+    const unsubBudget = onSnapshot(budgetQuery, (snapshot) => {
+      if (!snapshot.empty) {
+        const first = snapshot.docs[0];
+        setBudget({ id: first.id, ...first.data() } as Budget);
       } else {
         const initialBudget = {
           totalBudget: 5000000,
           currentBalance: 5000000,
           updatedAt: new Date().toISOString()
         };
-        setDoc(budgetRef, initialBudget)
-          .then(() => setBudget({ id: SHARED_BUDGET_ID, ...initialBudget } as Budget))
-          .catch(e => handleFirestoreError(e, OperationType.WRITE, 'budgets'));
+        addDoc(collection(db, 'budgets'), initialBudget).catch(e => handleFirestoreError(e, OperationType.WRITE, 'budgets'));
       }
     });
 
